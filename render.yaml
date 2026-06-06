@@ -1,44 +1,36 @@
-# render.yaml — Infrastructure-as-Code for Render.com
-# Commit this file to your repository root.
-# Render will detect it automatically when you create a new Blueprint.
-#
-# Docs: https://render.com/docs/blueprint-spec
-
 services:
   - type: web
-    name: my-backend            # ← change to your service name
+    name: my-backend            # ← change to your preferred service name
     runtime: python
     region: frankfurt           # options: oregon | frankfurt | ohio | singapore
-    plan: free                  # free tier — service spins down after 15 min idle
+    plan: free
 
-    # Render runs commands from the repository root by default.
-    rootDir: backend            # tells Render to cd into /backend first
+    rootDir: backend
 
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    # ↑ Adjust for your framework:
-    #   FastAPI : uvicorn main:app --host 0.0.0.0 --port $PORT
-    #   Flask   : gunicorn app:app
-    #   Django  : gunicorn myproject.wsgi:application
+    startCommand: gunicorn core.wsgi:application --bind 0.0.0.0:$PORT
 
-    healthCheckPath: /health    # expose GET /health in your app that returns 200
-                                # Render uses this to confirm the service is up
+    healthCheckPath: /api/health/
 
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0           # pin the version your app requires
+        value: 3.11.0
+
+      - key: DJANGO_SETTINGS_MODULE
+        value: core.settings
 
       - key: ENVIRONMENT
         value: production
 
-      # ── Add your own environment variables below ──
-      # Static values:
-      # - key: SOME_CONFIG_VALUE
-      #   value: example
-      #
-      # Secret values (set in Render dashboard, not here):
-      # - key: DATABASE_URL
-      #   sync: false           # "sync: false" means Render expects you to set
-      #                         # this secret manually in the dashboard
-      # - key: SECRET_KEY
-      #   sync: false
+      - key: DEBUG
+        value: "False"
+
+      # Set these manually in Render dashboard (sync: false = secret):
+      - key: SECRET_KEY
+        sync: false             # generate one at: https://djecrety.ir
+
+      - key: ALLOWED_HOSTS
+        sync: false             # e.g.  my-backend.onrender.com
+
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false             # e.g.  https://your-username.github.io
