@@ -1,0 +1,127 @@
+name: Deploy Frontend & Backend
+
+on:
+  push:
+    branches:
+      - main          # Change to your production branch if different
+  workflow_dispatch:  # Allows manual trigger from GitHub Actions tab
+
+# ─────────────────────────────────────────────────────────────
+# REQUIRED GITHUB SECRETS  (Settings → Secrets → Actions):
+#
+#   RENDER_DEPLOY_HOOK_URL  — found in Render dashboard:
+#     Service → Settings → Deploy Hook → copy the URL
+#
+# REQUIRED GITHUB VARIABLES (Settings → Variables → Actions):
+#   VITE_API_URL  — your Render service's public URL
+#     e.g. https://my-backend.onrender.com
+#     (used so the built frontend knows where the API lives)
+# ─────────────────────────────────────────────────────────────
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; cancel in-progress if a new push arrives
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ───────────────────────────────────────────────
+  # JOB 1 — Build React app and deploy to GH Pages
+  # ───────────────────────────────────────────────
+  deploy-frontend:
+    name: Build & Deploy Frontend → GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Inject the backend URL so the built bundle can reach the API.
+      # The variable is defined in Settings → Variables → Actions.
+      - name: Build React app (Vite)
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: npm run build
+        # ⚠️  If you use Create React App instead of Vite, rename the variable:
+        #      REACT_APP_API_URL: ${{ vars.VITE_API_URL }}
+        #  and reference it in your code as process.env.REACT_APP_API_URL
+
+      # Vite outputs to frontend/dist  |  CRA outputs to frontend/build
+      # Adjust the path below if you use CRA:  path: frontend/build
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ───────────────────────────────────────────────
+  # JOB 2 — Trigger Render.com deploy via webhook
+  # ───────────────────────────────────────────────
+  deploy-backend:
+    name: Trigger Backend Deploy → Render.com
+    runs-on: ubuntu-latest
+    # Only deploy the backend when files inside /backend actually changed.
+    # Remove this 'if' if you always want both jobs to run together.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(toJSON(github.event.commits.*.modified), 'backend/') ||
+      contains(toJSON(github.event.commits.*.added), 'backend/')
+
+    steps:
+      - name: Trigger Render deploy hook
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          echo "Render responded with HTTP $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+            echo "❌ Render deploy hook returned unexpected status: $HTTP_STATUS"
+            exit 1
+          fi
+          echo "✅ Render deployment triggered successfully."
+
+      # ── Optional: wait and poll Render until the deploy finishes ──
+      # Uncomment the block below if you want the workflow to reflect
+      # the real final status of the Render deployment (requires the
+      # Render API key and service ID as additional secrets).
+      #
+      # - name: Wait for Render deployment to complete
+      #   env:
+      #     RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      #     RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      #   run: |
+      #     echo "Polling Render for deploy status..."
+      #     for i in $(seq 1 20); do
+      #       STATUS=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+      #         "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=1" \
+      #         | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['deploy']['status'])")
+      #       echo "  attempt $i — status: $STATUS"
+      #       if [ "$STATUS" = "live" ]; then
+      #         echo "✅ Deploy is live!"; exit 0
+      #       elif [ "$STATUS" = "deactivated" ] || [ "$STATUS" = "build_failed" ]; then
+      #         echo "❌ Deploy failed with status: $STATUS"; exit 1
+      #       fi
+      #       sleep 30
+      #     done
+      #     echo "⏱️ Timed out waiting for Render deploy."; exit 1

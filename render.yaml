@@ -1,0 +1,44 @@
+# render.yaml — Infrastructure-as-Code for Render.com
+# Commit this file to your repository root.
+# Render will detect it automatically when you create a new Blueprint.
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: my-backend            # ← change to your service name
+    runtime: python
+    region: frankfurt           # options: oregon | frankfurt | ohio | singapore
+    plan: free                  # free tier — service spins down after 15 min idle
+
+    # Render runs commands from the repository root by default.
+    rootDir: backend            # tells Render to cd into /backend first
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # ↑ Adjust for your framework:
+    #   FastAPI : uvicorn main:app --host 0.0.0.0 --port $PORT
+    #   Flask   : gunicorn app:app
+    #   Django  : gunicorn myproject.wsgi:application
+
+    healthCheckPath: /health    # expose GET /health in your app that returns 200
+                                # Render uses this to confirm the service is up
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0           # pin the version your app requires
+
+      - key: ENVIRONMENT
+        value: production
+
+      # ── Add your own environment variables below ──
+      # Static values:
+      # - key: SOME_CONFIG_VALUE
+      #   value: example
+      #
+      # Secret values (set in Render dashboard, not here):
+      # - key: DATABASE_URL
+      #   sync: false           # "sync: false" means Render expects you to set
+      #                         # this secret manually in the dashboard
+      # - key: SECRET_KEY
+      #   sync: false
